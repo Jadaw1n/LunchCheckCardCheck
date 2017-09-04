@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace LunchCheckSaldoCheck
+namespace WebApplication
 {
     public static class Helpers
     {

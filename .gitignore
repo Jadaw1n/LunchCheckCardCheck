@@ -251,4 +251,5 @@ paket-files/
 .idea/
 *.sln.iml
 /data.json
-/Properties/launchSettings.json
+docker.private.env
+launchSettings.json

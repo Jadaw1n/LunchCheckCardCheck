@@ -1,0 +1,9 @@
+version: '3'
+
+services:
+  webapplication:
+    image: webapplication
+    build:
+      context: ./WebApplication
+      dockerfile: Dockerfile
+    env_file: docker.private.env
