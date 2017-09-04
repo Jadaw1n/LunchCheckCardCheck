@@ -39,8 +39,7 @@ namespace WebApplication
 
             Bot.StartReceiving();
             Console.WriteLine("Bot is ready!");
-            Console.ReadLine();
-            Bot.StopReceiving();
+            Thread.Sleep(Timeout.Infinite);
         }
 
         private void InitCheckCardTimer()
@@ -55,7 +54,7 @@ namespace WebApplication
 
                         if (saldo != card.LastSaldo || status != card.IsActive)
                         {
-                            await Bot.SendTextMessageAsync(chat.Chat.Id, $"Saldo: {saldo:00.00} CHF\nActive: {status}");
+                            await SendSaldoUpdate(chat.Chat, saldo, status);
 
                             card.IsActive = status;
                             card.LastSaldo = saldo;
@@ -69,6 +68,11 @@ namespace WebApplication
             });
         }
 
+        private async Task SendSaldoUpdate(Chat chat, float saldo, bool status)
+        {
+            await Bot.SendTextMessageAsync(chat.Id, $"Saldo: {saldo:00.00} CHF\nActive: {status}");
+        }
+
         private void InitDatabase()
         {
             try
@@ -78,6 +82,11 @@ namespace WebApplication
                     DataStore = JsonConvert.DeserializeObject<DataStore>(file.ReadToEnd());
                 }
                 Console.WriteLine($"Restored data from file {DataStoreFile}");
+                Console.WriteLine("Active accounts:");
+                DataStore.ChatData.Values.ToList().ForEach(c =>
+                {
+                    Console.WriteLine($"    {c.Chat.Id} {c.Chat.Username} {c.Chat.FirstName} {c.Chat.LastName}");
+                });
             }
             catch
             {
@@ -164,7 +173,7 @@ namespace WebApplication
             {
                 var (saldo, status) = await RetrieveCard(card);
 
-                await Bot.SendTextMessageAsync(message.Chat.Id, $"Saldo: {saldo:00.00}\nActive: {status}");
+                await SendSaldoUpdate(message.Chat, saldo, status);
 
                 if (!DataStore.ChatData.TryGetValue(message.Chat.Id, out ChatData chat))
                 {
