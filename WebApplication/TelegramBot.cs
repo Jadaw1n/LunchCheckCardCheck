@@ -22,6 +22,7 @@ namespace WebApplication
         private readonly string DataStoreFile = Environment.GetEnvironmentVariable("DATA_FILE") ?? "data.json";
 
         private DataStore DataStore { get; set; }
+        private Timer Timer { get; set; }
 
         private const string LUNCHCHECK_URL = "https://www.lunch-card.ch/saldo/saldo.aspx?crd=";
         private readonly Regex CardRegex = new Regex($"(?:{LUNCHCHECK_URL})?" + "([0-9]{4}) ?([0-9]{4}) ?([0-9]{4}) ?([0-9]{4})");
@@ -44,7 +45,7 @@ namespace WebApplication
 
         private void InitCheckCardTimer()
         {
-            Helpers.RunAt(CheckCardTimerTime, TimeSpan.FromDays(1), (e) =>
+            Timer = Helpers.RunAt(CheckCardTimerTime, TimeSpan.FromDays(1), (e) =>
             {
                 DataStore.ChatData.Values.ToList().ForEach(chat => chat.Cards.ForEach(async card =>
                 {
@@ -54,7 +55,7 @@ namespace WebApplication
 
                         if (saldo != card.LastSaldo || status != card.IsActive)
                         {
-                            await SendSaldoUpdate(chat.Chat, saldo, status);
+                            SendSaldoUpdate(chat.Chat, saldo, status);
 
                             card.IsActive = status;
                             card.LastSaldo = saldo;
@@ -68,7 +69,7 @@ namespace WebApplication
             });
         }
 
-        private async Task SendSaldoUpdate(Chat chat, float saldo, bool status)
+        private async void SendSaldoUpdate(Chat chat, float saldo, bool status)
         {
             await Bot.SendTextMessageAsync(chat.Id, $"Saldo: {saldo:00.00} CHF\nActive: {status}");
         }
@@ -173,7 +174,7 @@ namespace WebApplication
             {
                 var (saldo, status) = await RetrieveCard(card);
 
-                await SendSaldoUpdate(message.Chat, saldo, status);
+                SendSaldoUpdate(message.Chat, saldo, status);
 
                 if (!DataStore.ChatData.TryGetValue(message.Chat.Id, out ChatData chat))
                 {
