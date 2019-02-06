@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json;
+﻿using Microsoft.Extensions.Configuration;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -17,74 +18,86 @@ namespace WebApplication
 {
     public class TelegramBot
     {
-        private readonly TelegramBotClient Bot = new TelegramBotClient(Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN"));
-        private readonly TimeSpan CheckCardTimerTime = TimeSpan.Parse(Environment.GetEnvironmentVariable("CARD_CHECK_TIME") ?? "14:00");
-        private readonly string DataStoreFile = Environment.GetEnvironmentVariable("DATA_FILE") ?? "data.json";
+        private readonly Settings settings;
+        private readonly TelegramBotClient bot;
+        private readonly DataStore dataStore;
+        private readonly Regex cardRegex;
+        private readonly Regex cardStatusRegex = new Regex("Kontostand.*?([0-9]+.[0-9]{2}) CHF.*?Kartenstatus.*?\\<b\\>(.*?)\\</b\\>", RegexOptions.Singleline);
 
-        private DataStore DataStore { get; set; }
-        private Timer Timer { get; set; }
-
-        private const string LUNCHCHECK_URL = "https://www.lunch-card.ch/saldo/saldo.aspx?crd=";
-        private readonly Regex CardRegex = new Regex($"(?:{LUNCHCHECK_URL})?" + "([0-9]{4}) ?([0-9]{4}) ?([0-9]{4}) ?([0-9]{4})");
-
-        // TODO I18n for word parsing
-        private readonly Regex CardStatusRegex = new Regex("Kontostand.*?([0-9]+.[0-9]{2}) CHF.*?Kartenstatus.*?\\<b\\>(.*?)\\</b\\>", RegexOptions.Singleline);
-
-        public TelegramBot()
+        public TelegramBot(Settings settings)
         {
-            InitDatabase();
+            this.settings = settings;
+
+            cardRegex = new Regex($"(?:{settings.LunchcheckBaseUrl})?" + "([0-9]{4}) ?([0-9]{4}) ?([0-9]{4}) ?([0-9]{4})");
+
+            dataStore = InitDatabase();
+            bot = InitBot();
             InitCheckCardTimer();
 
-            // init bot
-            Bot.OnMessage += BotOnMessageReceived;
-
-            Bot.StartReceiving();
             Console.WriteLine("Bot is ready!");
+
             Thread.Sleep(Timeout.Infinite);
+        }
+
+        private TelegramBotClient InitBot()
+        {
+            var bot = new TelegramBotClient(settings.BotToken);
+            bot.OnMessage += BotOnMessageReceived;
+            bot.StartReceiving();
+
+            return bot;
         }
 
         private void InitCheckCardTimer()
         {
-            Timer = Helpers.RunAt(CheckCardTimerTime, TimeSpan.FromDays(1), (e) =>
+            Func<Task> workUnit = async () =>
             {
-                DataStore.ChatData.Values.ToList().ForEach(chat => chat.Cards.ForEach(async card =>
+                foreach (var (chatId, chat) in dataStore.ChatData)
                 {
-                    try
+                    foreach (var card in chat.Cards)
                     {
-                        var (saldo, status) = await RetrieveCard(card.CardNumber);
-
-                        if (saldo != card.LastSaldo || status != card.IsActive)
+                        try
                         {
+                            var (saldo, status) = await RetrieveCard(card.CardNumber);
+
                             SendSaldoUpdate(chat.Chat, saldo, status);
 
-                            card.IsActive = status;
-                            card.LastSaldo = saldo;
+                            if (saldo != card.LastSaldo || status != card.IsActive)
+                            {
+                                SendSaldoUpdate(chat.Chat, saldo, status);
+
+                                card.IsActive = status;
+                                card.LastSaldo = saldo;
+                            }
+                        }
+                        catch
+                        {
+                            // TODO do some error checking, and remove card if not valid anymore
                         }
                     }
-                    catch
-                    {
-                        // TODO do some error checking, and remove card if not valid anymore
-                    }
-                }));
-            });
+                }
+            };
+
+            new ScheduledTask(settings.CheckTime, workUnit);
         }
 
         private async void SendSaldoUpdate(Chat chat, float saldo, bool status)
         {
-            await Bot.SendTextMessageAsync(chat.Id, $"Saldo: {saldo:0.00} CHF\nActive: {status}");
+            await bot.SendTextMessageAsync(chat.Id, $"Saldo: {saldo:0.00} CHF\nActive: {status}");
         }
 
-        private void InitDatabase()
+        private DataStore InitDatabase()
         {
+            DataStore ds;
             try
             {
-                using (var file = System.IO.File.OpenText(DataStoreFile))
+                using (var file = System.IO.File.OpenText(settings.DataFile))
                 {
-                    DataStore = JsonConvert.DeserializeObject<DataStore>(file.ReadToEnd());
+                    ds = JsonConvert.DeserializeObject<DataStore>(file.ReadToEnd());
                 }
-                Console.WriteLine($"Restored data from file {DataStoreFile}");
+                Console.WriteLine($"Restored data from file {settings.DataFile}");
                 Console.WriteLine("Active accounts:");
-                DataStore.ChatData.Values.ToList().ForEach(c =>
+                ds.ChatData.Values.ToList().ForEach(c =>
                 {
                     Console.WriteLine($"    {c.Chat.Id} {c.Chat.Username} {c.Chat.FirstName} {c.Chat.LastName}");
                 });
@@ -92,22 +105,24 @@ namespace WebApplication
             catch
             {
                 Console.WriteLine($"Creating new DataStore.");
-                DataStore = new DataStore();
+                ds = new DataStore();
             }
 
             new Timer(_ =>
             {
                 try
                 {
-                    var s = JsonConvert.SerializeObject(DataStore);
-                    System.IO.File.WriteAllText(DataStoreFile, s);
+                    var s = JsonConvert.SerializeObject(ds);
+                    System.IO.File.WriteAllText(settings.DataFile, s);
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine($"Error when writing file {DataStoreFile}");
+                    Console.WriteLine($"Error when writing file {settings.DataFile}");
                     Console.WriteLine(e);
                 }
-            }, null, TimeSpan.Zero, TimeSpan.FromSeconds(10));
+            }, null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
+
+            return ds;
         }
 
         private readonly Dictionary<long, NextMessage> chatNextMessage = new Dictionary<long, NextMessage>();
@@ -129,7 +144,7 @@ namespace WebApplication
                     }
                     else
                     {
-                        await Bot.SendTextMessageAsync(message.Chat.Id, "Invalid Lunch Check card number. /cancel");
+                        await bot.SendTextMessageAsync(message.Chat.Id, "Invalid Lunch Check card number. /cancel");
                     }
 
                     break;
@@ -143,12 +158,12 @@ namespace WebApplication
 
         private async Task<(float saldo, bool status)> RetrieveCard(string cardNumber)
         {
-            WebRequest webRequest = WebRequest.Create(LUNCHCHECK_URL + cardNumber);
+            WebRequest webRequest = WebRequest.Create(settings.LunchcheckBaseUrl + cardNumber);
 
             using (var reader = new StreamReader((await webRequest.GetResponseAsync()).GetResponseStream()))
             {
                 string responseText = reader.ReadToEnd();
-                Match m2 = CardStatusRegex.Match(responseText);
+                Match m2 = cardStatusRegex.Match(responseText);
 
                 if (m2.Success)
                 {
@@ -164,7 +179,7 @@ namespace WebApplication
 
         private async Task<bool> TryRegisterCardNumberAsync(Message message)
         {
-            Match m = CardRegex.Match(message.Text);
+            Match m = cardRegex.Match(message.Text);
 
             if (!m.Success) return false;
 
@@ -176,9 +191,9 @@ namespace WebApplication
 
                 SendSaldoUpdate(message.Chat, saldo, status);
 
-                if (!DataStore.ChatData.TryGetValue(message.Chat.Id, out ChatData chat))
+                if (!dataStore.ChatData.TryGetValue(message.Chat.Id, out ChatData chat))
                 {
-                    DataStore.ChatData[message.Chat.Id] = chat = new ChatData { Chat = message.Chat };
+                    dataStore.ChatData[message.Chat.Id] = chat = new ChatData { Chat = message.Chat };
                 }
 
                 if (!chat.Cards.Any(c => c.CardNumber == card))
@@ -199,21 +214,21 @@ namespace WebApplication
             switch (message.Text)
             {
                 case "/newcard":
-                    await Bot.SendTextMessageAsync(message.Chat.Id, "Please send me your Lunch Check card number or link scanned from QR code. Or /cancel");
+                    await bot.SendTextMessageAsync(message.Chat.Id, "Please send me your Lunch Check card number or link scanned from QR code. Or /cancel");
                     chatNextMessage[message.Chat.Id] = NextMessage.AddCard;
                     break;
 
                 case "/about":
-                    await Bot.SendTextMessageAsync(message.Chat.Id, "This bot was programmed by a swiss guy.");
+                    await bot.SendTextMessageAsync(message.Chat.Id, "This bot was programmed by a swiss guy.");
                     break;
 
                 case "/start":
-                    await Bot.SendTextMessageAsync(message.Chat.Id, "This bot checks your Lunch Check saldo once per day, and sends you a message if it changed. Press /newcard to register a card.");
+                    await bot.SendTextMessageAsync(message.Chat.Id, "This bot checks your Lunch Check saldo once per day, and sends you a message if it changed. Press /newcard to register a card.");
                     break;
 
                 case "/cancel":
                     chatNextMessage.Remove(message.Chat.Id);
-                    await Bot.SendTextMessageAsync(message.Chat.Id, "Current operation canceled.");
+                    await bot.SendTextMessageAsync(message.Chat.Id, "Current operation canceled.");
                     break;
 
                 default:

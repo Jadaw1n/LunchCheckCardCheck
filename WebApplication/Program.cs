@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using System.Threading;
+using Microsoft.Extensions.Configuration;
 
 namespace WebApplication
 {
@@ -13,7 +14,18 @@ namespace WebApplication
     {
         public static void Main(string[] args)
         {
-            new TelegramBot();
+            var configBuilder = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json", optional: true)
+                .AddEnvironmentVariables()
+                .AddCommandLine(args)
+                .AddUserSecrets<Program>(true);
+
+            var config = configBuilder.Build();
+
+            var settings = config.Get<Settings>();
+
+            new TelegramBot(settings);
         }
     }
 }
