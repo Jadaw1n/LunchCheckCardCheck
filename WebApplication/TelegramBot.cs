@@ -71,7 +71,7 @@ namespace WebApplication
 
         private async void SendSaldoUpdate(Chat chat, float saldo, bool status)
         {
-            await Bot.SendTextMessageAsync(chat.Id, $"Saldo: {saldo:00.00} CHF\nActive: {status}");
+            await Bot.SendTextMessageAsync(chat.Id, $"Saldo: {saldo:0.00} CHF\nActive: {status}");
         }
 
         private void InitDatabase()
@@ -110,13 +110,13 @@ namespace WebApplication
             }, null, TimeSpan.Zero, TimeSpan.FromSeconds(10));
         }
 
-        private Dictionary<long, NextMessage> chatNextMessage = new Dictionary<long, NextMessage>();
+        private readonly Dictionary<long, NextMessage> chatNextMessage = new Dictionary<long, NextMessage>();
 
         private async void BotOnMessageReceived(object sender, MessageEventArgs messageEventArgs)
         {
             var message = messageEventArgs.Message;
 
-            if (message == null || message.Type != MessageType.TextMessage) return;
+            if (message == null || message.Type != MessageType.Text) return;
 
             var nextMessage = chatNextMessage.FirstOrDefault(c => c.Key == message.Chat.Id).Value;
 
