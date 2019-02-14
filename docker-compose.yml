@@ -2,8 +2,9 @@ version: '3.4'
 
 services:
   webapplication:
-    image: webapplication
-    build:
-      context: ./WebApplication
-      dockerfile: Dockerfile
+    image: ${DOCKER_REGISTRY-}webapplication
     env_file: docker.private.env
+    restart: always
+    build:
+      context: .
+      dockerfile: WebApplication/Dockerfile

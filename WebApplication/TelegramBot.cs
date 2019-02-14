@@ -1,18 +1,16 @@
-﻿using Microsoft.Extensions.Configuration;
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
-using System.Threading;
 using System.Threading.Tasks;
 using Telegram.Bot;
 using Telegram.Bot.Args;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
+using System.Threading;
 
 namespace WebApplication
 {
@@ -50,7 +48,7 @@ namespace WebApplication
 
         private void InitCheckCardTimer()
         {
-            Func<Task> workUnit = async () =>
+            Action workUnit = async () =>
             {
                 foreach (var (chatId, chat) in dataStore.ChatData)
                 {
@@ -60,8 +58,6 @@ namespace WebApplication
                         {
                             var (saldo, status) = await RetrieveCard(card.CardNumber);
 
-                            SendSaldoUpdate(chat.Chat, saldo, status);
-
                             if (saldo != card.LastSaldo || status != card.IsActive)
                             {
                                 SendSaldoUpdate(chat.Chat, saldo, status);
@@ -70,15 +66,17 @@ namespace WebApplication
                                 card.LastSaldo = saldo;
                             }
                         }
-                        catch
+                        catch (Exception e)
                         {
                             // TODO do some error checking, and remove card if not valid anymore
+                            Console.WriteLine($"Regular Check error: {e}");
                         }
                     }
                 }
             };
 
-            new ScheduledTask(settings.CheckTime, workUnit);
+            var scheduler = new Scheduler(settings.CheckTime, workUnit);
+            scheduler.Start();
         }
 
         private async void SendSaldoUpdate(Chat chat, float saldo, bool status)
@@ -108,7 +106,7 @@ namespace WebApplication
                 ds = new DataStore();
             }
 
-            new Timer(_ =>
+            Action workUnit = () =>
             {
                 try
                 {
@@ -120,7 +118,10 @@ namespace WebApplication
                     Console.WriteLine($"Error when writing file {settings.DataFile}");
                     Console.WriteLine(e);
                 }
-            }, null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
+            };
+
+            var scheduler = new Scheduler("* * * * *", workUnit);
+            scheduler.Start();
 
             return ds;
         }
